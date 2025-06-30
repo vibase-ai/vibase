@@ -1,0 +1,34 @@
+# Environment files
+.env
+.env.*
+
+# TypeScript build outputs (specific to common output directories)
+dist/
+lib/
+build/
+out/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+.nyc_output
+
+# Logs specific to this package
+*.log
+npm-debug.log*
+
+# Package-specific temporary files
+.tmp/
+temp/
+
+# IDE files (if different from root)
+.vscode/settings.json
+
+# Compiled JS/declaration files ONLY if they match source TS files
+# (This prevents committing compiled versions of source files)
+src/**/*.js
+src/**/*.d.ts
+src/**/*.js.map
+src/**/*.d.ts.map
