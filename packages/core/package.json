@@ -44,14 +44,14 @@
   ],
   "author": "Vibase Team",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/your-org/vibase#readme",
+  "homepage": "https://github.com/vibase-ai/vibase#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vibase/vibase.git",
+    "url": "https://github.com/vibase-ai/vibase.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/your-org/vibase/issues"
+    "url": "https://github.com/vibase-ai/vibase/issues"
   },
   "packageManager": "pnpm@10.7.0",
   "devDependencies": {
