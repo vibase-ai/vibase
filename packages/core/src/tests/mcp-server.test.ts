@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createMcpServerFromConfig,
-  addToolsToMcpServer,
-  ToolConfigWithShape,
+    addToolsToMcpServer,
+    createMcpServerFromConfig,
+    ToolConfigWithShape,
 } from "../mcp-server.js";
 import type { ToolboxConfig } from "../validate-config.js";
 
@@ -335,7 +335,9 @@ describe("createMcpServerFromConfig", () => {
         "test_db",
         config.sources.test_db,
         expect.any(Object),
-        args
+        args,
+        {},
+        expect.any(Object)
       );
       expect(result).toBe(mockResult);
     });
@@ -411,7 +413,9 @@ describe("createMcpServerFromConfig", () => {
         "test_db",
         config.sources.test_db,
         expect.any(Object),
-        expect.objectContaining({ limit: 10, flag: true })
+        expect.objectContaining({ limit: 10, flag: true }),
+        {},
+        expect.any(Object)
       );
     });
     it("should coerce default string number/boolean to correct type", async () => {
@@ -449,7 +453,9 @@ describe("createMcpServerFromConfig", () => {
         "test_db",
         config.sources.test_db,
         expect.any(Object),
-        expect.objectContaining({ limit: 5, flag: false })
+        expect.objectContaining({ limit: 5, flag: false }),
+        {},
+        expect.any(Object)
       );
     });
   });

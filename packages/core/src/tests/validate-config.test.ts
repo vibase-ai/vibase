@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { validateConfig, type ToolboxConfig } from "../validate-config.js";
+import { describe, expect, it } from "vitest";
+import { validateConfig } from "../validate-config.js";
 
 describe("validateConfig", () => {
   describe("valid configurations", () => {
@@ -199,9 +199,9 @@ describe("validateConfig", () => {
 
   describe("invalid configurations", () => {
     it("should reject null or undefined config", () => {
-      expect(() => validateConfig(null)).toThrow("Invalid YAML configuration");
+      expect(() => validateConfig(null)).toThrow("❌ YAML Configuration Validation Failed");
       expect(() => validateConfig(undefined)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -219,7 +219,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -234,7 +234,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -258,7 +258,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -282,7 +282,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -309,7 +309,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -337,7 +337,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -365,7 +365,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -394,7 +394,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -418,7 +418,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -470,7 +470,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -500,7 +500,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -524,7 +524,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
   });
@@ -561,6 +561,83 @@ describe("validateConfig", () => {
 
       const result = validateConfig(config);
       expect(result).toEqual(config);
+    });
+
+    it("should inherit kind from source when not specified in tool", () => {
+      const config = {
+        sources: {
+          db: {
+            kind: "postgres",
+            connection_string: "postgresql://localhost/test",
+          },
+        },
+        tools: {
+          test_tool: {
+            // No kind specified - should inherit from source
+            source: "db",
+            description: "Test tool that inherits kind",
+            parameters: [],
+            statement: "SELECT 1",
+          },
+        },
+      };
+
+      const result = validateConfig(config);
+      
+      // The result should have the inherited kind
+      expect(result.tools.test_tool.kind).toBe("postgres");
+      expect(result.sources.db.kind).toBe("postgres");
+    });
+
+    it("should inherit postgres-sql kind from source", () => {
+      const config = {
+        sources: {
+          db: {
+            kind: "postgres-sql",
+            connection_string: "postgresql://localhost/test",
+          },
+        },
+        tools: {
+          test_tool: {
+            // No kind specified - should inherit postgres-sql
+            source: "db",
+            description: "Test tool that inherits postgres-sql kind",
+            parameters: [],
+            statement: "SELECT 1",
+          },
+        },
+      };
+
+      const result = validateConfig(config);
+      
+      // The result should have the inherited kind
+      expect(result.tools.test_tool.kind).toBe("postgres-sql");
+    });
+
+    it("should allow explicit kind that's compatible with source", () => {
+      const config = {
+        sources: {
+          db: {
+            kind: "postgres",
+            connection_string: "postgresql://localhost/test",
+          },
+        },
+        tools: {
+          test_tool: {
+            kind: "postgres-sql", // Explicit kind, should be compatible
+            source: "db",
+            description: "Test tool with explicit compatible kind",
+            parameters: [],
+            statement: "SELECT 1",
+          },
+        },
+      };
+
+      const result = validateConfig(config);
+      
+      // The explicit kind should be preserved
+      expect(result.tools.test_tool.kind).toBe("postgres-sql");
+      expect(result.sources.db.kind).toBe("postgres");
     });
   });
 
@@ -671,7 +748,7 @@ describe("validateConfig", () => {
       };
 
       expect(() => validateConfig(invalidConfig)).toThrow(
-        "Invalid YAML configuration"
+        "❌ YAML Configuration Validation Failed"
       );
     });
 
@@ -704,6 +781,52 @@ describe("validateConfig", () => {
 
       const result = validateConfig(config);
       expect(result).toEqual(config);
+    });
+
+    it("should format validation errors in a developer-friendly way", () => {
+      const invalidConfig = {
+        sources: {
+          db: {
+            kind: "invalid-kind", // Invalid kind
+            connection_string: "postgresql://localhost/test",
+          },
+        },
+        tools: {
+          broken_tool: {
+            kind: "mysql", // Invalid kind
+            source: "nonexistent_source", // Non-existent source
+            // Missing description
+            parameters: [
+              {
+                name: "param1",
+                type: "invalid_type", // Invalid type
+                // Missing description
+              },
+            ],
+            // Missing statement
+          },
+        },
+      };
+
+      try {
+        validateConfig(invalidConfig);
+        // Should not reach here
+        expect(true).toBe(false);
+      } catch (error) {
+        const errorMessage = (error as Error).message;
+        
+        // Check that the error message has the nice formatting
+        expect(errorMessage).toContain("❌ YAML Configuration Validation Failed");
+        expect(errorMessage).toContain("The following errors were found:");
+        expect(errorMessage).toContain("Please fix these issues and try again.");
+        
+        // Check that errors are numbered
+        expect(errorMessage).toMatch(/\s+1\./);
+        
+        // Check that paths are formatted nicely
+        expect(errorMessage).toContain("(at sources.db)");
+        expect(errorMessage).toContain("(at tools.broken_tool");
+      }
     });
   });
 });

@@ -36,14 +36,14 @@ sources:
 
 tools:
   get_boards:
-    kind: postgres-sql
+    kind: postgres
     source: todo_db
     description: Retrieve all todo boards
     statement: SELECT id, name, description FROM boards ORDER BY created_at DESC;
     parameters: []
 
   search_tasks:
-    kind: postgres-sql
+    kind: postgres
     source: todo_db
     description: Search tasks by title or description
     parameters:
@@ -88,7 +88,7 @@ main().catch(console.error);
 
 ## API Reference
 
-### Configuration Loading
+### Configuration
 
 #### `loadConfigFromYaml(configPath: string): ToolboxConfig`
 
@@ -127,7 +127,7 @@ Loads and validates configuration from a YAML string.
 
 ### Server Creation
 
-#### `createMcpServerFromConfig(config: ToolboxConfig, options?: ServerOptions): { server: McpServer; cleanup: () => Promise<void> }`
+#### `createMcpServerFromConfig(config: ToolboxConfig, options?: ServerOptions): { server: McpServer; cleanup: () => Promise<void>; plugins: PluginRegistry }`
 
 Creates an MCP server from a validated configuration object.
 
@@ -140,6 +140,55 @@ Creates an MCP server from a validated configuration object.
 
 - `server`: The MCP server instance
 - `cleanup`: Async function to clean up database connections
+- `plugins`: Plugin registry for registering custom plugins
+
+#### `addToolsToMcpServer(server: McpServer, config: ToolboxConfig): { cleanup: () => Promise<void>; plugins: PluginRegistry }`
+
+Adds tools from configuration to an existing MCP server. This is useful when you want to add tools to a server that was created separately.
+
+**Parameters:**
+
+- `server`: Existing MCP server instance
+- `config`: Validated configuration object
+
+**Returns:**
+
+- `cleanup`: Async function to clean up database connections
+- `plugins`: Plugin registry for registering custom plugins
+
+**Example:**
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { addToolsToMcpServer, loadConfigFromYaml } from "@vibase/core";
+
+// Create server manually
+const server = new McpServer({
+  name: "My Custom Server",
+  version: "1.0.0",
+});
+
+// Load configuration and add tools
+const config = loadConfigFromYaml("./config.yaml");
+const { cleanup, plugins } = addToolsToMcpServer(server, config);
+
+// Register plugins if needed
+const authPlugin = {
+  name: "auth",
+  callbacks: {
+    beforeQuery: (context) => {
+      return { pgSettings: new Map([["role", "authenticated"]]) };
+    }
+  }
+};
+plugins.register(authPlugin);
+
+// Connect transport and handle cleanup
+process.on("SIGINT", async () => {
+  await cleanup();
+  process.exit(0);
+});
+```
 
 ## Configuration Format
 
@@ -161,7 +210,7 @@ Define SQL-based tools:
 ```yaml
 tools:
   tool-name:
-    kind: postgres-sql
+    kind: postgres
     source: source-name # References a source
     description: Human-readable description
     parameters:
@@ -172,44 +221,131 @@ tools:
     statement: SELECT * FROM table WHERE column = $1;
 ```
 
-## Examples
+## Plugins API
 
-### Todo Management System
+`@vibase/core` includes a plugin system that allows you to modify query execution behavior. The most common use case is implementing authentication with JWT tokens and PostgreSQL Row Level Security (RLS).
 
-```yaml
-sources:
-  todo_db:
-    kind: postgres
-    connection_string: postgres://user:password@localhost:5432/todo_management
+### Plugin Registration
 
-tools:
-  get_overdue_tasks:
-    kind: postgres-sql
-    source: todo_db
-    description: Get all tasks that are past their due date
-    statement: |
-      SELECT t.id, t.title, t.due_date, s.name as stage_name
-      FROM tasks t
-      JOIN stages s ON t.stage_id = s.id
-      WHERE t.due_date < NOW() AND s.name != 'Done'
-      ORDER BY t.due_date ASC;
-    parameters: []
+```typescript
+import { createMcpServerFromConfig, loadConfigFromYaml } from "@vibase/core";
 
-  get_tasks_by_priority:
-    kind: postgres-sql
-    source: todo_db
-    description: Get tasks filtered by priority level
-    parameters:
-      - name: priority_level
-        type: string
-        description: Priority level (Low, Medium, High, Critical)
-        required: true
-    statement: |
-      SELECT t.id, t.title, t.priority, s.name as stage_name
-      FROM tasks t
-      JOIN stages s ON t.stage_id = s.id
-      WHERE t.priority = $1;
+// Create server and get plugins registry
+const config = loadConfigFromYaml("./config.yaml");
+const { server, plugins } = createMcpServerFromConfig(config);
+
+// Register a plugin
+const myPlugin = {
+  name: "my-plugin",
+  callbacks: {
+    beforeQuery: (context) => {
+      // Plugin logic here
+      return { pgSettings: new Map([["role", "authenticated"]]) };
+    }
+  }
+};
+plugins.register(myPlugin);
 ```
+
+### JWT Authentication Plugin Example
+
+Here's how you can implement JWT bearer token authentication:
+
+```typescript
+import jwt from "jsonwebtoken";
+
+function createBearerAuthPlugin(jwtSecret: string) {
+  return {
+    name: "bearer-auth",
+    callbacks: {
+      beforeQuery: ({ extra }) => {
+        const pgSettings = new Map();
+        
+        try {
+          // Extract JWT from authInfo.token or Authorization header
+          let token = extra?.authInfo?.token;
+          if (!token) {
+            const authHeader = extra?.requestInfo?.headers?.authorization;
+            if (authHeader?.startsWith('Bearer ')) {
+              token = authHeader.replace(/^Bearer\s+/i, '');
+            }
+          }
+          
+          if (!token) {
+            // No token - set anonymous role
+            pgSettings.set('role', 'anonymous');
+            return { pgSettings };
+          }
+          
+          // Verify and decode JWT
+          const decoded = jwt.verify(token, jwtSecret);
+          
+          // Set PostgreSQL session variables for RLS
+          pgSettings.set('role', 'authenticated');
+          pgSettings.set('jwt.claims.sub', decoded.sub);
+          pgSettings.set('jwt.claims.role', decoded.role);
+          
+          return { pgSettings };
+          
+        } catch (error) {
+          // JWT verification failed - set anonymous role
+          pgSettings.set('role', 'anonymous');
+          return { pgSettings };
+        }
+      }
+    }
+  };
+}
+
+// Register the plugin
+const authPlugin = createBearerAuthPlugin(process.env.JWT_SECRET);
+plugins.register(authPlugin);
+```
+
+### How Plugins Work
+
+1. **Plugin Structure**: Plugins are objects with a `name` and `callbacks` for different hooks
+2. **Plugin Registration**: Use `plugins.register(plugin)` to register a complete plugin
+3. **Hook Execution**: Plugin callbacks run before each query (more hooks coming soon)
+4. **Context Access**: Callbacks receive context including tool name, parsed arguments, and request metadata
+5. **Session Variables**: Plugins return `pgSettings` Maps that become PostgreSQL session variables
+6. **Automatic Transactions**: When `pgSettings` are present, queries run in transactions with variables applied
+7. **RLS Integration**: SQL queries can access variables via `current_setting('jwt.claims.sub')`
+
+### Plugin Management
+
+```typescript
+// Get all registered plugins
+const allPlugins = plugins.getRegisteredPlugins();
+
+// Get specific plugin by name
+const authPlugin = plugins.getPlugin("bearer-auth");
+
+```
+
+### Row Level Security Integration
+
+With the authentication plugin, your SQL queries can reference JWT claims:
+
+```sql
+-- Users can only see their own todos
+CREATE POLICY user_todos ON todos
+  FOR ALL USING (user_id = current_setting('jwt.claims.sub')::uuid);
+
+-- Query automatically filtered by RLS
+SELECT * FROM todos; -- Only returns current user's todos
+```
+
+### Plugin Context
+
+Plugin callbacks receive a context object with:
+
+- `toolName`: Name of the tool being executed
+- `toolConfig`: Tool configuration from YAML
+- `pool`: Database connection pool
+- `parsedArgs`: Validated tool arguments
+- `extra`: MCP request metadata (authInfo, requestInfo, etc.)
+- `query`: The SQL query being executed
 
 ## Security Considerations
 

@@ -3,11 +3,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ConnectionManager } from "./connection-manager.js";
 import { executeQuery } from "./execute-query.js";
+import { PluginRegistry } from "./plugins.js";
 import {
   type PostgresSource,
   type PostgresSqlTool,
   type ToolboxConfig,
 } from "./validate-config.js";
+
+
 
 // Helper function to convert parameter type to Zod schema
 function createZodSchema(paramType: string, coerce: boolean = false) {
@@ -45,7 +48,7 @@ function createZodSchema(paramType: string, coerce: boolean = false) {
 
 // Class to extend PostgresSqlTool with Zod shape caching
 export class ToolConfigWithShape implements PostgresSqlTool {
-  kind: "postgres-sql";
+  kind: "postgres";
   source: string;
   description: string;
   parameters: PostgresSqlTool["parameters"];
@@ -53,7 +56,7 @@ export class ToolConfigWithShape implements PostgresSqlTool {
   protected _zodShape?: Record<string, z.ZodTypeAny>;
 
   constructor(tool: PostgresSqlTool) {
-    this.kind = tool.kind;
+    this.kind = "postgres";
     this.source = tool.source;
     this.description = tool.description;
     this.parameters = tool.parameters;
@@ -130,9 +133,12 @@ export class ToolConfigWithShape implements PostgresSqlTool {
 export function addToolsToMcpServer(
   server: McpServer,
   config: ToolboxConfig
-): { cleanup: () => Promise<void> } {
+): { cleanup: () => Promise<void>; plugins: PluginRegistry } {
   // Initialize connection manager
   const connectionManager = new ConnectionManager();
+  
+  // Create plugins registry
+  const plugins = new PluginRegistry();
 
   // Register tools from configuration
   for (const [toolName, toolConfigRaw] of Object.entries(config.tools)) {
@@ -175,7 +181,9 @@ export function addToolsToMcpServer(
             toolConfig.source,
             sourceConfig,
             connectionManager,
-            validation.parsedArgs ?? {}
+            validation.parsedArgs ?? {},
+            _extra || {},
+            plugins
           );
         } catch (err) {
           // Always return structured error for execution failures
@@ -193,11 +201,12 @@ export function addToolsToMcpServer(
     );
   }
 
-  // Return cleanup function
+  // Return cleanup function and plugins
   return {
     cleanup: async () => {
       await connectionManager.closeAll();
     },
+    plugins,
   };
 }
 
@@ -208,7 +217,7 @@ export function addToolsToMcpServer(
 export function createMcpServerFromConfig(
   config: ToolboxConfig,
   options: ServerOptions = {}
-): { server: McpServer; cleanup: () => Promise<void> } {
+): { server: McpServer; cleanup: () => Promise<void>; plugins: PluginRegistry } {
   // Create MCP server
   const server = new McpServer({
     name: "Vibase MCP Server",
@@ -217,12 +226,13 @@ export function createMcpServerFromConfig(
   });
 
   // Add tools to the server
-  const { cleanup } = addToolsToMcpServer(server, config);
+  const { cleanup, plugins } = addToolsToMcpServer(server, config);
 
-  // Return server and cleanup function
+  // Return server, cleanup function, and plugins
   return {
     server,
     cleanup,
+    plugins,
   };
 }
 

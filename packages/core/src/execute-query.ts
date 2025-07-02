@@ -1,7 +1,23 @@
-import type { CallToolResult, TextContent } from "@modelcontextprotocol/sdk/types.js";
-import sql, { value } from "pg-sql2";
+import type { CallToolResult, MessageExtraInfo, TextContent } from "@modelcontextprotocol/sdk/types.js";
+import type { PoolClient } from "pg";
 import type { ConnectionManager } from "./connection-manager.js";
+import type { BeforeQueryContext, Plugins } from "./plugins.js";
 import type { PostgresSource, PostgresSqlTool } from "./validate-config.js";
+
+// Symbol for client queuing (like PostGraphile)
+const $$queue = Symbol('pg-client-queue');
+
+// Extend PoolClient type to include our queue symbol
+interface QueuedPoolClient extends PoolClient {
+  [$$queue]?: Promise<any> | null;
+}
+
+// Helper function to ensure client operations are queued (like PostGraphile)
+async function ensureClientQueue(client: QueuedPoolClient): Promise<void> {
+  while (client[$$queue]) {
+    await client[$$queue];
+  }
+}
 
 // Helper function to build connection string from source configuration
 function buildConnectionString(source: PostgresSource): string {
@@ -13,7 +29,7 @@ function buildConnectionString(source: PostgresSource): string {
   }
 }
 
-// Helper function to build safe SQL queries using 3-step approach
+// Helper function to convert named parameters to positional parameters for safe parameterized queries
 function buildSafeQuery(
   statement: string,
   parameters: Record<string, any>
@@ -21,7 +37,7 @@ function buildSafeQuery(
   let sqlStatement = statement;
   let paramValues: any[] = [];
   
-  // Step 1: Replace named parameters with positional parameters
+  // Convert named parameters to positional parameters
   if (statement.includes(":")) {
     const paramMap = new Map<string, number>();
     const paramMatches = Array.from(statement.matchAll(/:(\w+)/g));
@@ -44,58 +60,21 @@ function buildSafeQuery(
       const regex = new RegExp(`:${paramName}\\b`, 'g');
       sqlStatement = sqlStatement.replace(regex, `$${position}`);
     }
+    
+    return { text: sqlStatement, values: paramValues };
   } else if (statement.includes("$")) {
     // Already has positional parameters
     paramValues = Object.values(parameters);
+    return { text: statement, values: paramValues };
   } else {
     // No parameters
     return { text: statement, values: [] };
   }
-  
-  // Now we have sqlStatement with $1, $2, etc. and paramValues array
-  // Let's use pg-sql2 to safely build the query
-  try {
-    // Split the statement by placeholders and build fragments
-    const fragments: any[] = [];
-    let currentPos = 0;
-    
-    for (let i = 1; i <= paramValues.length; i++) {
-      const placeholder = `$${i}`;
-      const placeholderIndex = sqlStatement.indexOf(placeholder, currentPos);
-      
-      if (placeholderIndex !== -1) {
-        // Add text before placeholder (if any)
-        if (placeholderIndex > currentPos) {
-          const textBefore = sqlStatement.substring(currentPos, placeholderIndex);
-          fragments.push(textBefore);
-        }
-        
-        // Add the safe value
-        fragments.push(value(paramValues[i - 1]));
-        
-        currentPos = placeholderIndex + placeholder.length;
-      }
-    }
-    
-    // Add remaining text (if any)
-    if (currentPos < sqlStatement.length) {
-      fragments.push(sqlStatement.substring(currentPos));
-    }
-    
-    // Use sql.join to combine all fragments
-    const query = sql.join(fragments, '');
-    const compiled = sql.compile(query);
-    return { text: compiled.text, values: compiled.values || [] };
-    
-  } catch (error) {
-    // Fallback: if pg-sql2 fails, use simple parameterized query
-    console.warn('pg-sql2 compilation failed, falling back to simple parameterized query:', error);
-    return { text: sqlStatement, values: paramValues };
-  }
 }
 
 /**
- * Execute a SQL query with the given parameters using pg-sql2 for SQL injection protection
+ * Execute a SQL query with the given parameters using parameterized queries for SQL injection protection.
+ * Automatically handles transactions when plugins return pgSettings (PostGraphile-inspired approach).
  */
 export async function executeQuery(
   toolName: string,
@@ -103,20 +82,85 @@ export async function executeQuery(
   sourceName: string,
   sourceConfig: PostgresSource,
   connectionManager: ConnectionManager,
-  parsedArgs: Record<string, any>
+  parsedArgs: Record<string, any>,
+  extra: MessageExtraInfo = {},
+  plugins?: Plugins
 ): Promise<CallToolResult> {
+  let pool: any;
+  let client: QueuedPoolClient | undefined;
+  let query: string = '';
+  let queryResult: any;
+  let error: Error | undefined;
+
   try {
     // Build connection string from source configuration
     const connectionString = buildConnectionString(sourceConfig);
 
-    // Get database connection
-    const pool = connectionManager.getPool(sourceName, connectionString);
+    // Get database connection pool
+    pool = connectionManager.getPool(sourceName, connectionString);
 
-    // Build safe SQL query using pg-sql2
+    // Build safe SQL query using parameterized queries
     const { text, values } = buildSafeQuery(toolConfig.statement, parsedArgs);
+    query = text;
 
-    // Execute the safe query
-    const queryResult = await pool.query(text, values);
+    // Resolve plugin configuration
+    let pgSettings: Map<string, string> | undefined;
+    if (plugins) {
+      const context: BeforeQueryContext = {
+        toolName,
+        toolConfig,
+        pool,
+        parsedArgs,
+        extra,
+        query,
+      };
+      
+      const config = await plugins.executeHook('beforeQuery', context);
+      pgSettings = config.pgSettings;
+    }
+
+    if (pgSettings && pgSettings.size > 0) {
+      // Need dedicated client + transaction (PostGraphile approach)
+      client = await pool.connect() as QueuedPoolClient;
+
+      // Ensure operations are queued on this client
+      await ensureClientQueue(client);
+
+      // Start the queued operation
+      client[$$queue] = (async () => {
+        try {
+          await client!.query("BEGIN");
+
+          // Apply all settings at once using PostGraphile's approach
+          // First, ensure jwt.claims.role is mapped to the actual 'role' setting for RLS
+          const enhancedSettings = new Map(pgSettings!);
+          if (!enhancedSettings.has('role') && enhancedSettings.has('jwt.claims.role')) {
+            // Map jwt.claims.role to the actual PostgreSQL role setting
+            enhancedSettings.set('role', enhancedSettings.get('jwt.claims.role')!);
+          }
+          
+          const settingsEntries = Array.from(enhancedSettings.entries()).map(([key, value]) => [key, String(value)]);
+          await client!.query({
+            text: "SELECT set_config(el->>0, el->>1, true) FROM json_array_elements($1::json) el",
+            values: [JSON.stringify(settingsEntries)],
+          });
+
+          // Execute the main query with the configured client
+          const result = await client!.query(text, values);
+
+          await client!.query("COMMIT");
+          return result;
+        } catch (e) {
+          await client!.query("ROLLBACK");
+          throw e;
+        }
+      })();
+
+      queryResult = await client[$$queue];
+    } else {
+      // No settings, use pool directly (no transaction needed)
+      queryResult = await pool.query(text, values);
+    }
 
     return {
       content: [
@@ -126,7 +170,9 @@ export async function executeQuery(
         } as TextContent,
       ],
     };
-  } catch (error: any) {
+  } catch (err: any) {
+    error = err instanceof Error ? err : new Error(String(err));
+
     return {
       content: [
         {
@@ -136,6 +182,12 @@ export async function executeQuery(
       ],
       isError: true,
     };
+  } finally {
+    // Clean up client queue and release connection
+    if (client) {
+      client[$$queue] = null;
+      client.release();
+    }
   }
 }
 
