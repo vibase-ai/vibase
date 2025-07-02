@@ -7,26 +7,26 @@ Easily read and mutate Postgres data using MCP.
 `@vibase/core` provides the foundational components for creating MCP (Model Context Protocol) servers on top of Postgres using simple configuration files.
 
 - Run on your own machine with STDIO
-- Deploy on lambda
-- Or package in a DXT
+- Deploy on lambda or Cloudflare workers
+- Package in a [Claude Desktop Extension](https://www.anthropic.com/engineering/desktop-extensions)
 
 ## Features
 
 - **YAML Configuration**: Define MCP tools using simple YAML configuration files
 - **PostgreSQL Support**: Direct SQL execution against PostgreSQL databases with connection pooling
-- **Safe SQL Generation**: Uses [pg-sql2](https://www.npmjs.com/package/pg-sql2) for safe SQL query construction
+- **Safe SQL Generation**: Uses parameterized queries for safe SQL query construction
 - **Type Safety**: Full TypeScript support with Zod validation
 - **Connection Management**: Automatic connection pooling and cleanup
 
 ## Installation
 
 ```bash
-pnpm install @vibase/core
+npm install -g @vibase/core
 ```
 
 ## Quick Start
 
-1. **Create a YAML configuration file** (`config.yaml`):
+1. **Create a YAML configuration file** (`tools.yaml`):
 
 ```yaml
 sources:
@@ -60,33 +60,13 @@ tools:
 
 2. **Create and run the MCP server**:
 
-```typescript
-import { loadConfigFromYaml, createMcpServerFromConfig } from "@vibase/core";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-
-async function main() {
-  // Step 1: Load and validate configuration
-  const config = loadConfigFromYaml("./config.yaml");
-
-  // Step 2: Create server from configuration
-  const { server, cleanup } = createMcpServerFromConfig(config);
-
-  // Step 3: Connect transport and start server
-  const transport = new StdioServerTransport();
-
-  // Handle graceful shutdown
-  process.on("SIGINT", async () => {
-    await cleanup();
-    process.exit(0);
-  });
-
-  await server.connect(transport);
-}
-
-main().catch(console.error);
+```bash
+npx @vibase/core tools.yaml
 ```
 
 ## API Reference
+
+Use Vibase with any TypeScript MCP server.
 
 ### Configuration
 
