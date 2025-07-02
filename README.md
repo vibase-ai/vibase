@@ -61,8 +61,12 @@ tools:
 2. **Create and run the MCP server**:
 
 ```bash
-npx @vibase/core tools.yaml
+npx @vibase/core tools.yaml --http 5555
 ```
+
+Your MCP server now runs over streamable HTTP on http://localhost:5555
+You can view options with ```--help```
+
 
 ## API Reference
 
